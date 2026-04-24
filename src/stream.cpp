@@ -33,6 +33,59 @@ extern "C" {
 #include "system_tray.h"
 #include "thread_safe.h"
 #include "utility.h"
+// BWFB ADD
+#include "rtcp_feedback.h"
+#include "bw_controller.h"
+#include <thread>
+#include <atomic>
+
+// ── BWFB ADD: module-level bandwidth-controller state ───────────────────────
+static std::unique_ptr<BandwidthController> g_bw_ctrl;
+static std::thread g_bw_thread;
+static std::atomic<bool> g_bw_running{false};
+
+void start_bw_listener(int rtcp_sock, uint32_t initial_bps,
+                        uint32_t min_bps, uint32_t max_bps) {
+  if (!config::video.adaptive_bitrate) return;
+
+  g_bw_ctrl = std::make_unique<BandwidthController>(initial_bps, min_bps, max_bps);
+  g_bw_running = true;
+
+  g_bw_thread = std::thread([rtcp_sock]() {
+    uint8_t buf[256];
+    bwfb::FeedbackReport report{};
+    while (g_bw_running.load()) {
+#ifdef _WIN32
+      // Windows setsockopt uses const char* and int
+      DWORD tv_ms = 300;
+      setsockopt(rtcp_sock, SOL_SOCKET, SO_RCVTIMEO,
+                 reinterpret_cast<const char *>(&tv_ms), sizeof(tv_ms));
+#else
+      struct timeval tv{ 0, 300000 };
+      setsockopt(rtcp_sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+#endif
+      int n = recv(rtcp_sock, reinterpret_cast<char *>(buf), sizeof(buf), 0);
+      if (n < 32) continue;
+      if (bwfb::deserialize(buf, n, report)) {
+        g_bw_ctrl->update(report.pkts_sent, report.pkts_received,
+                          report.rtt_us, report.jitter_us);
+      }
+      // Non-BWFB RTCP packets fall through untouched — existing flow unaffected.
+    }
+  });
+}
+
+void stop_bw_listener() {
+  g_bw_running = false;
+  if (g_bw_thread.joinable()) g_bw_thread.join();
+  g_bw_ctrl.reset();
+}
+
+uint32_t current_encode_bps() {
+  if (g_bw_ctrl) return g_bw_ctrl->current_target_bps();
+  return 0;  // 0 = use static configured bitrate (fallback)
+}
+// ── end BWFB ADD ─────────────────────────────────────────────────────────────
 
 constexpr int IDX_START_A = 0;
 constexpr int IDX_START_B = 1;
@@ -1957,6 +2010,7 @@ namespace stream {
         platf::streaming_will_stop();
       }
 
+      stop_bw_listener();  // BWFB ADD — tear down before socket close
       BOOST_LOG(debug) << "Session ended"sv;
     }
 
@@ -1998,6 +2052,14 @@ namespace stream {
         system_tray::update_tray_playing(proc::proc.get_last_run_app_name());
 #endif
       }
+
+      // BWFB ADD — start bandwidth listener on the video socket
+      // (initial=10 Mbps, min from config, max=50 Mbps)
+      start_bw_listener(
+        static_cast<int>(session.broadcast_ref->video_sock.native_handle()),
+        10'000'000u,
+        config::video.adaptive_bitrate_min_kbps * 1000u,
+        50'000'000u);
 
       return 0;
     }

@@ -46,6 +46,10 @@ namespace config {
     bool nv_opengl_vulkan_on_dxgi;
     bool nv_sunshine_high_power_mode;
 
+    // BWFB ADD — adaptive bitrate control flags
+    bool adaptive_bitrate = true;              ///< Enable Parsec-style dynamic bandwidth control
+    uint32_t adaptive_bitrate_min_kbps = 1000; ///< Never adapt below this floor (kbps)
+
     struct {
       int preset;
       int multipass;

@@ -135,7 +135,7 @@ namespace nvenc {
       return false;
     }
 
-    NV_ENC_INITIALIZE_PARAMS init_params = {NV_ENC_INITIALIZE_PARAMS_VER};
+    init_params = {NV_ENC_INITIALIZE_PARAMS_VER};
 
     switch (client_config.videoFormat) {
       case 0:
@@ -253,7 +253,7 @@ namespace nvenc {
       return false;
     }
 
-    NV_ENC_CONFIG enc_config = preset_config.presetCfg;
+    enc_config = preset_config.presetCfg;
     enc_config.profileGUID = NV_ENC_CODEC_PROFILE_AUTOSELECT_GUID;
     enc_config.gopLength = NVENC_INFINITE_GOPLENGTH;
     enc_config.frameIntervalP = 1;
@@ -638,6 +638,30 @@ namespace nvenc {
     }
 
     return true;
+  }
+
+  bool nvenc_base::reconfigure_bitrate(uint32_t new_bps) {
+    if (!encoder || !nvenc) {
+      return false;
+    }
+
+    NV_ENC_RECONFIGURE_PARAMS recfg = {NV_ENC_RECONFIGURE_PARAMS_VER};
+    recfg.forceIDR = 0;
+    recfg.resetEncoder = 0;
+
+    recfg.reInitEncodeParams = init_params;
+    // Update the bitrate
+    recfg.reInitEncodeParams.encodeConfig->rcParams.averageBitRate = new_bps;
+    
+    // Update VBV size
+    uint32_t fps = init_params.frameRateNum / (init_params.frameRateDen ? init_params.frameRateDen : 1);
+    if (fps > 0) {
+      recfg.reInitEncodeParams.encodeConfig->rcParams.vbvBufferSize = new_bps / fps;
+      recfg.reInitEncodeParams.encodeConfig->rcParams.vbvInitialDelay = new_bps / fps;
+    }
+
+    NVENCSTATUS status = nvenc->nvEncReconfigureEncoder(encoder, &recfg);
+    return !nvenc_failed(status);
   }
 
   bool nvenc_base::nvenc_failed(NVENCSTATUS status) {

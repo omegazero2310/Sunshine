@@ -15,6 +15,8 @@
 #include "crypto.h"
 #include "video.h"
 
+uint32_t current_encode_bps();
+
 namespace stream {
   constexpr auto VIDEO_STREAM_PORT = 9;
   constexpr auto CONTROL_PORT = 10;

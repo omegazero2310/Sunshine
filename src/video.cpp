@@ -37,6 +37,26 @@ extern "C" {
 }
 #endif
 
+// BWFB ADD
+#include "stream.h"  // for current_encode_bps()
+
+static uint32_t s_last_applied_bps = 0;
+
+void maybe_reconfigure_nvenc_bitrate(nvenc::nvenc_base* nvenc) {
+  if (!nvenc) return;
+  uint32_t new_bps = current_encode_bps();
+  if (new_bps == 0) return;
+
+  float ratio = (s_last_applied_bps > 0)
+    ? static_cast<float>(new_bps) / static_cast<float>(s_last_applied_bps)
+    : 2.0f;
+  if (ratio > 0.95f && ratio < 1.05f) return;  // change < 5%, skip
+
+  if (nvenc->reconfigure_bitrate(new_bps)) {
+    s_last_applied_bps = new_bps;
+  }
+}
+
 using namespace std::literals;
 
 namespace video {
@@ -417,6 +437,7 @@ namespace video {
       if (!device || !device->nvenc) {
         return {};
       }
+      maybe_reconfigure_nvenc_bitrate(device->nvenc.get());   // BWFB ADD
 
       auto result = device->nvenc->encode_frame(frame_index, force_idr);
       force_idr = false;
